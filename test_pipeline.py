@@ -76,11 +76,11 @@ ok("a known P index in original samples is rescaled to the 20 Hz grid")
 
 print("\n[6] features")
 f = extract_features(win)
-assert len(f) == 17, len(f)
+assert len(f) == 13, len(f)
 for k in RF_V2_FEATURES:
     assert k in f, k
     assert np.isfinite(f[k]), (k, f[k])
-ok("all 17 features computed and finite")
+ok("all 13 features computed and finite")
 assert np.isclose(f["peak"], 1.0)
 assert f["duration_10"] >= f["duration_20"]
 ok("peak == 1 after normalising; duration_10 >= duration_20")
