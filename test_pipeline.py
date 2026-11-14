@@ -147,5 +147,14 @@ assert X.shape[1] == 13 and np.isfinite(X).all()
 ok(f"{len(wins)} DAS channels -> feature matrix {X.shape}, all finite")
 picks = [i["p_index"] for i in infos]
 ok(f"picks ranged {min(picks)}-{max(picks)} samples (moveout across the cable)")
-
+from src.das_convert import velocity_to_strain_rate
+print("\n[9] das_convert")
+fs = 100.0
+t = np.arange(0, 10, 1/fs)
+v = np.sin(2*np.pi*1*t)
+sr = velocity_to_strain_rate(v, fs, c=3000, to_microstrain=False)
+expected = -(2*np.pi*1) * np.cos(2*np.pi*1*t) / 3000
+assert np.allclose(sr[5:-5], expected[5:-5], rtol=0, atol=0.01*np.abs(expected).max())
+ok("derivative of a sine matches the analytic strain rate")
 print("\nAll checks passed.\n")
+
