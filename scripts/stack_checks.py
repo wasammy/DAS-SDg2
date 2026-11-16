@@ -15,7 +15,8 @@ For each file:
     (same file), and, if some files have no P, at the same time in those files
   - observed onset: first time the 2-40 Hz envelope stack rises clearly above
     its pre-P level (median + 5 robust std, held for 0.5 s), searched P-5..P+20 s
-  - window fit: needs >= 10 s before P and >= 50 s after P (1200 samples at 20 Hz)
+  - window fit: needs >= 10 s before P and >= 50 s after P (1200 samples at 20 Hz),
+    with no more than 1% of that window zero-filled (data gaps)
 
 Usage, from the top of the repo:
     python scripts/stack_checks.py --dataset monterey
@@ -47,6 +48,7 @@ CATALOG_CSV = ROOT / "data" / "catalog_match.csv"   # Osman's first pass (v1)
 CABLE_LATLON = (35.65, -117.66)
 
 PRE_NEEDED_S, POST_NEEDED_S = 10.0, 50.0
+MAX_GAP_FRAC = 0.01   # window fails if more than 1% of it is zero-filled
 AFTER_S, GAP_S, BEFORE_S = 6.0, 2.0, 6.0
 
 
@@ -108,6 +110,15 @@ def observed_onset(t, env, p_s, search=(-5.0, 20.0), k=5.0, hold_s=0.5):
         if run >= hold:
             return float(t[idx[j - hold + 1]])
     return np.nan
+
+
+def zero_filled(data, chan_frac=0.9):
+    """
+    Boolean per time sample: True where nearly all channels are exactly 0.
+    That marks a data gap filled with zeros (e.g. ci39494008 has no data after
+    ~70 s), not a quiet period. Real DAS noise is never exactly 0 on every channel.
+    """
+    return (np.asarray(data) == 0).mean(axis=0) > chan_frac
 
 
 def fake_splits_before(p_s, step_s=1.0):
@@ -174,7 +185,7 @@ def main():
         st, _ = substack(data, fs, group=args.group)
         t, env = envelope_stack(data, fs)
         rec.append(dict(file=f.name, fs=fs, dur=meta["n_time"] / fs, info=info,
-                        st=st, t=t, env=env))
+                        st=st, t=t, env=env, zero=zero_filled(data)))
         print(f"loaded {f.name}", flush=True)
 
     no_p = [r for r in rec if r["info"] is None]
@@ -195,7 +206,12 @@ def main():
 
         row["pre_P_s"] = round(p, 1)
         row["post_P_s"] = round(r["dur"] - p, 1)
-        row["fits_window"] = bool(p >= PRE_NEEDED_S and r["dur"] - p >= POST_NEEDED_S)
+        long_enough = p >= PRE_NEEDED_S and r["dur"] - p >= POST_NEEDED_S
+        i0 = max(0, int(round((p - PRE_NEEDED_S) * fs)))
+        i1 = int(round((p + POST_NEEDED_S) * fs))
+        gap_frac = float(r["zero"][i0:i1].mean()) if i1 > i0 else 1.0
+        row["zero_filled_in_window_pct"] = round(100 * gap_frac, 1)
+        row["fits_window"] = bool(long_enough and gap_frac <= MAX_GAP_FRAC)
 
         on = observed_onset(r["t"], r["env"], p)
         row["onset_s"] = round(on, 1) if np.isfinite(on) else np.nan
