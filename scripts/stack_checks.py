@@ -21,7 +21,10 @@ For each file:
 Usage, from the top of the repo:
     python scripts/stack_checks.py --dataset monterey
     python scripts/stack_checks.py --dataset ridgecrest
+    python scripts/stack_checks.py --dataset ridgecrest --per-channel
 Writes data/stack_checks_<dataset>.csv and .png (data/ is not in Git).
+--per-channel also tests each channel at P against fake-P windows and writes
+data/stack_checks_<dataset>_channels.csv.
 """
 
 import argparse
@@ -121,6 +124,39 @@ def zero_filled(data, chan_frac=0.9):
     return (np.asarray(data) == 0).mean(axis=0) > chan_frac
 
 
+def per_channel_summary(data, fs, p_s, n_blocks=10, fmin=0.5, fmax=10.0):
+    """
+    after_before at P on every channel (fmin-fmax Hz), against the same ratio at
+    fake-P splits before the event. The noise threshold is the 99th (and 95th)
+    percentile of all channels' fake ratios, so ~1% (5%) of channels pass by chance.
+
+    returns: dict of per-event numbers, plus pct_block_0..n_blocks-1 = percent of
+    channels above the 99th-pct threshold in each block along the cable.
+    None if there is no room for fake splits before P.
+    """
+    splits = fake_splits_before(p_s)
+    if not splits or p_s + AFTER_S > data.shape[1] / fs:
+        return None
+    x = data - data.mean(axis=1, keepdims=True)    # per-channel mean, not one shared mean
+    sos = butter(4, [fmin, min(fmax, 0.45 * fs)], btype="bandpass", fs=fs, output="sos")
+    y = sosfiltfilt(sos, x, axis=1)
+    live = y.std(axis=1) > 1e-12
+    r_p = np.full(data.shape[0], np.nan)
+    r_p[live] = after_before(y[live], fs, p_s)
+    fakes = np.array([after_before(y[live], fs, s) for s in splits])
+    thr99, thr95 = np.percentile(fakes, 99), np.percentile(fakes, 95)
+    rl = r_p[live]
+    out = dict(n_live_channels=int(live.sum()), n_fake=len(splits),
+               median_channel_ratio=round(float(np.median(rl)), 2),
+               threshold_99=round(float(thr99), 2),
+               pct_channels_above_99=round(100 * float((rl > thr99).mean()), 1),
+               pct_channels_above_95=round(100 * float((rl > thr95).mean()), 1))
+    for k, b in enumerate(np.array_split(r_p, n_blocks)):
+        b = b[np.isfinite(b)]
+        out[f"pct_block_{k}"] = round(100 * float((b > thr99).mean()), 0) if b.size else np.nan
+    return out
+
+
 def fake_splits_before(p_s, step_s=1.0):
     """Split times whose whole after/before measurement ends >= 1 s before P."""
     lo = GAP_S + BEFORE_S
@@ -169,6 +205,9 @@ def main():
     ap = argparse.ArgumentParser(description="per-file P checks on DAS event files")
     ap.add_argument("--dataset", choices=DATASETS, required=True)
     ap.add_argument("--group", type=int, default=50, help="channels per substack")
+    ap.add_argument("--per-channel", action="store_true",
+                    help="also test every channel at P (0.5-10 Hz) against fake-P "
+                         "windows; writes data/stack_checks_<dataset>_channels.csv")
     args = ap.parse_args()
 
     files = sorted(DATASETS[args.dataset].glob("*.h5"))
@@ -184,8 +223,11 @@ def main():
         info = catalog.get(f.name) if catalog is not None else p_from_metadata(meta)
         st, _ = substack(data, fs, group=args.group)
         t, env = envelope_stack(data, fs)
+        chan = None
+        if args.per_channel and info is not None:
+            chan = per_channel_summary(data, fs, info["p_s"])
         rec.append(dict(file=f.name, fs=fs, dur=meta["n_time"] / fs, info=info,
-                        st=st, t=t, env=env, zero=zero_filled(data)))
+                        st=st, t=t, env=env, zero=zero_filled(data), chan=chan))
         print(f"loaded {f.name}", flush=True)
 
     no_p = [r for r in rec if r["info"] is None]
@@ -239,6 +281,27 @@ def main():
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print(df.to_string(index=False))
     print(f"\nsaved {out_csv}")
+
+    if args.per_channel:
+        crow = []
+        for r in rec:
+            if r["info"] is None:
+                continue
+            row = dict(file=r["file"], mag=r["info"]["mag"],
+                       dist_km=round(r["info"]["dist_km"], 0), p_s=round(r["info"]["p_s"], 1))
+            row.update(r["chan"] if r["chan"] is not None
+                       else dict(note="no room for fake windows before P"))
+            crow.append(row)
+        cdf = pd.DataFrame(crow)
+        if "dist_km" in cdf:
+            cdf = cdf.sort_values(["dist_km", "mag"], ascending=[True, False])
+        out_ch = ROOT / "data" / f"stack_checks_{args.dataset}_channels.csv"
+        cdf.to_csv(out_ch, index=False)
+        print("\nPER CHANNEL (0.5-10 Hz): % of channels above each file's 99th-pct "
+              "fake-window ratio (chance ~1%); pct_block_k = same, per 1/10 of the cable")
+        with pd.option_context("display.width", 250, "display.max_columns", 40):
+            print(cdf.to_string(index=False))
+        print(f"\nsaved {out_ch}")
 
     import matplotlib
     matplotlib.use("Agg")
