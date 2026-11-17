@@ -7,6 +7,15 @@ import pandas as pd
 LABELS = ["EQ", "UNE"]
 
 
+def norm(label):
+    s = str(label).strip().lower()
+    if s in ("eq", "earthquake"):
+        return "EQ"
+    if s in ("une", "explosion"):
+        return "UNE"
+    raise ValueError(f"Unknown label: {label!r}")
+
+
 def wilson(k, n, z=1.96):
     p = k / n
     d = 1 + z**2 / n
@@ -41,8 +50,9 @@ def evaluate(y_true, y_pred):
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        # CSV with a column named "pred" holding EQ or UNE, one row per event
-        pred = pd.read_csv(sys.argv[1])["pred"].tolist()
+        # CSV with a column named "pred" holding EQ/UNE (or earthquake/explosion),
+        # one row per event
+        pred = [norm(p) for p in pd.read_csv(sys.argv[1])["pred"]]
         truth = ["EQ"] * len(pred)  # all 33 DAS events are earthquakes
     else:
         print("DUMMY PREDICTIONS (31 EQ, 2 UNE), for testing only")
