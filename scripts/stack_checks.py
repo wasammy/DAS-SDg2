@@ -7,6 +7,9 @@ P time per file:
                P-aligned at 10 s (Nov 15 finding).
   ridgecrest : origin time from the file's metadata (event_time_index) + iasp91
                P travel time from the event to the cable (CABLE_LATLON, approximate).
+  arcata     : origin = event_time - begin_time + iasp91 P travel time to the
+               cable's mean surveyed position (USGS channel file). Files are
+               cropped to origin-30..origin+90 s by scripts/fetch_arcata.py.
 
 For each file:
   - ratio at P: 0.5-10 Hz substacks (group=50), median over substacks of
@@ -22,6 +25,7 @@ Usage, from the top of the repo:
     python scripts/stack_checks.py --dataset monterey
     python scripts/stack_checks.py --dataset ridgecrest
     python scripts/stack_checks.py --dataset ridgecrest --per-channel
+    python scripts/stack_checks.py --dataset arcata --per-channel
 Writes data/stack_checks_<dataset>.csv and .png (data/ is not in Git).
 --per-channel also tests each channel at P against fake-P windows and writes
 data/stack_checks_<dataset>_channels.csv.
@@ -44,11 +48,26 @@ from src.stacking import substack      # noqa: E402
 DATASETS = {
     "monterey": ROOT / "data" / "monterey_bay" / "data",
     "ridgecrest": ROOT / "data" / "ridgecrest_north" / "data",
+    "arcata": ROOT / "data" / "arcata" / "data",   # cropped by scripts/fetch_arcata.py
 }
 CATALOG_CSV = ROOT / "data" / "catalog_match.csv"   # Osman's first pass (v1)
 # Ridgecrest DAS cable, approximate (city of Ridgecrest). The cable is ~9 km long,
 # so this is good to about +-1 s in P. Checked against the observed onset.
 CABLE_LATLON = (35.65, -117.66)
+# Arcata cable: surveyed channel positions from the USGS data release
+# (doi:10.5066/P1V7CKGA, das_chan_locations_winter2023.csv), saved in data/arcata/.
+# P is computed at the cable's mean position; p_spread_s reports how much P
+# varies along the cable for that event.
+ARCATA_CHAN_CSV = ROOT / "data" / "arcata" / "das_chan_locations_winter2023.csv"
+
+
+def cable_points(dataset):
+    """(center (lat, lon), array of (lat, lon) along the cable or None)."""
+    if dataset == "arcata":
+        c = pd.read_csv(ARCATA_CHAN_CSV)
+        pts = c[["Latitude", "Longitude"]].to_numpy()
+        return (float(pts[:, 0].mean()), float(pts[:, 1].mean())), pts[::100]
+    return CABLE_LATLON, None
 
 PRE_NEEDED_S, POST_NEEDED_S = 10.0, 50.0
 MAX_GAP_FRAC = 0.01   # window fails if more than 1% of it is zero-filled
@@ -176,27 +195,52 @@ def p_from_catalog(csv_path=CATALOG_CSV):
     return out
 
 
-def p_from_metadata(meta, cable=CABLE_LATLON):
+def origin_seconds(meta):
     """
-    P time (s from window start) = origin index / fs + iasp91 P travel time.
-    Returns dict(p_s, mag, dist_km, origin_s) or None if the metadata is missing.
-    Note event_time_index = -1 means "missing" (and -1 is truthy).
+    Origin time in s from the window start, or None.
+    Uses event_time_index if valid (Ridgecrest); otherwise event_time - begin_time
+    (Arcata files have no event_time_index). -1 means missing (and -1 is truthy).
+    """
+    idx = meta.get("event_time_index")
+    if idx is not None and idx >= 0:
+        return idx / meta["fs"]
+    et, bt = meta.get("event_time"), meta.get("begin_time")
+    if not et or not bt:
+        return None
+    return (pd.Timestamp(et) - pd.Timestamp(bt)).total_seconds()
+
+
+def p_from_metadata(meta, cable=CABLE_LATLON, along=None):
+    """
+    P time (s from window start) = origin time + iasp91 P travel time to `cable`.
+    along: optional (n, 2) lat/lon points on the cable; then p_spread_s = max - min
+    of P over those points.
+    Returns dict(p_s, mag, dist_km, origin_s[, p_spread_s]) or None if metadata is missing.
     """
     from obspy.geodetics import locations2degrees
     from obspy.taup import TauPyModel
 
-    idx = meta.get("event_time_index")
-    if idx is None or idx < 0 or meta.get("latitude") is None:
+    origin_s = origin_seconds(meta)
+    if origin_s is None or meta.get("latitude") is None or meta.get("magnitude") is None:
         return None
-    origin_s = idx / meta["fs"]
-    dist_deg = locations2degrees(cable[0], cable[1], meta["latitude"], meta["longitude"])
-    arr = TauPyModel("iasp91").get_travel_times(
-        source_depth_in_km=max(float(meta.get("depth_km", 10.0)), 0.0),
-        distance_in_degree=dist_deg, phase_list=["ttp"])
-    if not arr:
+    model = TauPyModel("iasp91")
+    depth = max(float(meta.get("depth_km", 10.0)), 0.0)
+
+    def ttp(lat, lon):
+        d = locations2degrees(lat, lon, meta["latitude"], meta["longitude"])
+        arr = model.get_travel_times(source_depth_in_km=depth, distance_in_degree=d,
+                                     phase_list=["ttp"])
+        return (arr[0].time if arr else np.nan), d
+
+    tp, dist_deg = ttp(*cable)
+    if not np.isfinite(tp):
         return None
-    return dict(p_s=origin_s + arr[0].time, mag=meta.get("magnitude"),
-                dist_km=dist_deg * 111.19, origin_s=origin_s)
+    out = dict(p_s=origin_s + tp, mag=meta.get("magnitude"),
+               dist_km=dist_deg * 111.19, origin_s=origin_s)
+    if along is not None:
+        ts = [ttp(la, lo)[0] for la, lo in along]
+        out["p_spread_s"] = float(np.nanmax(ts) - np.nanmin(ts))
+    return out
 
 
 # ---------- run ----------
@@ -214,13 +258,15 @@ def main():
     if not files:
         sys.exit(f"no .h5 files in {DATASETS[args.dataset]}")
     catalog = p_from_catalog() if args.dataset == "monterey" else None
+    center, along = cable_points(args.dataset)
 
     # pass 1: load each file once, keep only the small things we need
     rec = []
     for f in files:
         data, meta = load_das_event(f)
         fs = meta["fs"]
-        info = catalog.get(f.name) if catalog is not None else p_from_metadata(meta)
+        info = (catalog.get(f.name) if catalog is not None
+                else p_from_metadata(meta, center, along))
         st, _ = substack(data, fs, group=args.group)
         t, env = envelope_stack(data, fs)
         chan = None
@@ -245,6 +291,8 @@ def main():
         row.update(mag=info["mag"], dist_km=round(info["dist_km"], 0), p_s=round(p, 1))
         if "origin_s" in info:
             row["origin_s"] = round(info["origin_s"], 1)
+        if "p_spread_s" in info:
+            row["p_spread_s"] = round(info["p_spread_s"], 1)
 
         row["pre_P_s"] = round(p, 1)
         row["post_P_s"] = round(r["dur"] - p, 1)
