@@ -148,7 +148,6 @@ assert X.shape[1] == 13 and np.isfinite(X).all()
 ok(f"{len(wins)} DAS channels -> feature matrix {X.shape}, all finite")
 picks = [i["p_index"] for i in infos]
 ok(f"picks ranged {min(picks)}-{max(picks)} samples (moveout across the cable)")
-ok("derivative of a sine matches the analytic strain rate")
 print("\n[9] das_convert")
 fs = 100.0
 t = np.arange(0, 10, 1/fs)
