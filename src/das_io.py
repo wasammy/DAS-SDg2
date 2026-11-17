@@ -32,7 +32,9 @@ def load_das_event(path):
                 val = val.item()
             meta[key] = val
 
-    dt = float(meta.get("dt_s", 0.01))
+    if "dt_s" not in meta:
+        raise ValueError(f"{path}: no dt_s attribute, can't tell the sampling rate")
+    dt = float(meta["dt_s"])
     meta["fs"] = 1.0 / dt
     meta["n_channels"], meta["n_time"] = data.shape
     return data, meta
