@@ -1,23 +1,5 @@
-"""Earthquakes within 5 deg of GTUNE stations, to balance the <5 deg bin.
-
-download_eqs.py draws events from 1.5-20 deg at random, and most of that area is
-far away, so it returns few near events (7 of 85 below 5deg vs 190 explosions).
-This script asks only for 1.5-5 deg events, with the same magnitude, depth,
-channel and 60s window as download_eqs.py.
-
-Only stations that recorded a GTUNE explosion under 5 deg are used, so near
-earthquakes and near explosions come from the same stations. Otherwise the
-model could tell the classes apart by station (site response, instrument)
-instead of by source.
-
-Why not closer than 1.5 deg: the closest GTUNE explosion is 1.8 deg. Near
-earthquakes with no explosions at the same distance would let the model learn
-"close means earthquake", which would make the DAS test (events < 1 deg) look
-good for the wrong reason.
-
-Saves after every station. Resume with the station number it stopped at.
-Usage: python scripts/download_eqs_near.py [start_station]
-Writes data/gtune/eqs_near.h5
+"""Earthquakes 1.5-5 deg from GTUNE stations that recorded an explosion under 5 deg.
+Usage: python scripts/download_eqs_near.py [start_station]   -> data/gtune/eqs_near.h5
 """
 import os
 import random
@@ -28,10 +10,10 @@ from obspy import UTCDateTime
 
 sys.path.insert(0, ".")
 sys.path.insert(0, "scripts")
-import download_eqs as base 
+import download_eqs as base
 
-PER_STATION = 5
-MIN_MAG, MAX_DEPTH_KM = base.MIN_MAG, base.MAX_DEPTH_KM #same as download_eqs.py
+PER_STATION = 12
+MIN_MAG, MAX_DEPTH_KM = base.MIN_MAG, base.MAX_DEPTH_KM
 MIN_DIST, MAX_DIST = 1.5, 5.0
 OUT = "data/gtune/eqs_near.h5"
 random.seed(1)
@@ -48,7 +30,6 @@ def events_near(lat, lon):
 
 
 def near_explosion_stations():
-    """GTUNE stations with at least one explosion record under MAX_DIST deg."""
     g = base.load_gtune()
     g = g[g["station_dist"] < MAX_DIST]
     return g.drop_duplicates(["net", "station"])[["net", "station", "stla", "stlo"]]
