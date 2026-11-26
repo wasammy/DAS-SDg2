@@ -1,14 +1,19 @@
-"""Earthquakes within 5 deg of the GTUNE stations, to balance the <5 deg bin.
+"""Earthquakes within 5 deg of GTUNE stations, to balance the <5 deg bin.
 
 download_eqs.py draws events from 1.5-20 deg at random, and most of that area is
-far away, so it returns few near events (7 of 85 below 5 deg vs 190 explosions).
+far away, so it returns few near events (7 of 85 below 5deg vs 190 explosions).
 This script asks only for 1.5-5 deg events, with the same magnitude, depth,
-channel and 60 s window as download_eqs.py.
+channel and 60s window as download_eqs.py.
 
-Why not closer than 1.5 deg: the closest GTUNE explosion is 1.8 deg. Earthquakes
-with no explosions at the same distance would let the model learn "close means
-earthquake", which would make the DAS test (events < 1 deg) look good for the
-wrong reason.
+Only stations that recorded a GTUNE explosion under 5 deg are used, so near
+earthquakes and near explosions come from the same stations. Otherwise the
+model could tell the classes apart by station (site response, instrument)
+instead of by source.
+
+Why not closer than 1.5 deg: the closest GTUNE explosion is 1.8 deg. Near
+earthquakes with no explosions at the same distance would let the model learn
+"close means earthquake", which would make the DAS test (events < 1 deg) look
+good for the wrong reason.
 
 Saves after every station. Resume with the station number it stopped at.
 Usage: python scripts/download_eqs_near.py [start_station]
@@ -23,10 +28,10 @@ from obspy import UTCDateTime
 
 sys.path.insert(0, ".")
 sys.path.insert(0, "scripts")
-import download_eqs as base   # reuses its clients, station list and fetch_record
+import download_eqs as base 
 
 PER_STATION = 5
-MIN_MAG, MAX_DEPTH_KM = base.MIN_MAG, base.MAX_DEPTH_KM   # same as download_eqs.py
+MIN_MAG, MAX_DEPTH_KM = base.MIN_MAG, base.MAX_DEPTH_KM #same as download_eqs.py
 MIN_DIST, MAX_DIST = 1.5, 5.0
 OUT = "data/gtune/eqs_near.h5"
 random.seed(1)
@@ -42,18 +47,26 @@ def events_near(lat, lon):
     return events
 
 
+def near_explosion_stations():
+    """GTUNE stations with at least one explosion record under MAX_DIST deg."""
+    g = base.load_gtune()
+    g = g[g["station_dist"] < MAX_DIST]
+    return g.drop_duplicates(["net", "station"])[["net", "station", "stla", "stlo"]]
+
+
 if __name__ == "__main__":
     start = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     rows = []
     if start > 1 and os.path.exists(OUT):
         rows = pd.read_hdf(OUT, "df").to_dict("records")
         print("resuming with", len(rows), "saved records")
-    # skip (event, station) pairs that download_eqs.py already has
+    
     done = set()
     if os.path.exists(base.OUT):
         old = pd.read_hdf(base.OUT, "df")
         done = set(zip(old["evid"], old["net"], old["station"]))
-    stations = base.gtune_stations()
+    stations = near_explosion_stations()
+    print(len(stations), "stations recorded an explosion under", MAX_DIST, "deg")
     for i, s in enumerate(stations.itertuples(), 1):
         if i < start:
             continue
