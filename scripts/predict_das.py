@@ -1,0 +1,69 @@
+"""Classify Ridgecrest DAS events with the seismograph-trained RF.
+
+One prediction per event: substack 50 channels, preprocess each block like the
+seismograph data, predict each block, event probability==median over blocks.
+Writes predictions in evaluate.py's format, plus block features for Test 6.
+"""
+import os
+import sys
+
+import joblib
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, ".")
+from src.das_io import load_das_event
+from src.stacking import substack
+from src.preprocess import preprocess_trace
+from src.features import extract_features
+from src.compare import FEATURES_11
+
+DATA_DIR = "data/ridgecrest_north/data"
+CHECKS = "data/stack_checks_ridgecrest.csv"
+MODELS = {"all": "data/models/rf_all.joblib", "lt5": "data/models/rf_lt5.joblib"}
+
+def test_events():
+    c = pd.read_csv(CHECKS)
+    keep = c[(c["fits_window"] == True) & (c["above_all_fakes"] == True)]
+    print(f"{len(keep)} of {len(c)} Ridgecrest files are detectable and fit the window")
+    return keep
+
+def block_features(path, p_s):
+    data, meta = load_das_event(path)
+    fs = meta["fs"]
+    blocks, counts = substack(data, fs, group=50, filtered=False)  # filtered once, below
+    rows = []
+    for b, (x, n) in enumerate(zip(blocks, counts)):
+        if n == 0:
+            continue   # block with no live channels
+        try:
+            win, _ = preprocess_trace(x, fs, p_index=round(p_s * fs))
+        except ValueError:
+            continue
+        rows.append({"block": b, **extract_features(win)})
+    return pd.DataFrame(rows)
+
+if __name__ == "__main__":
+    os.makedirs("data/predictions", exist_ok=True)
+    models = {k: joblib.load(v) for k, v in MODELS.items()}
+    preds = {k: [] for k in models}
+    feats = []
+    for _, r in test_events().iterrows():
+        f = block_features(os.path.join(DATA_DIR, r["file"]), r["p_s"])
+        if f.empty:
+            print(r["file"], "-> no usable blocks")
+            continue
+        eid = r["file"].replace(".h5", "")
+        f = f.assign(event_id=eid, label="EQ", dist_deg=r["dist_km"] / 111.19)
+        feats.append(f)
+        for k, m in models.items():
+            p = float(np.median(m.predict_proba(f[FEATURES_11])[:, 1]))
+            preds[k].append(dict(event_id=eid, dataset="ridgecrest", true="EQ",
+                                 pred="UNE" if p > 0.5 else "EQ", prob_une=round(p, 3)))
+        print(f"{eid}: {len(f)} blocks, M{r['mag']} {r['dist_km']:.0f} km, "
+              f"P(UNE) all={preds['all'][-1]['prob_une']} lt5={preds['lt5'][-1]['prob_une']}")
+
+    pd.concat(feats).to_csv("data/features/ridgecrest_blocks.csv", index=False)
+    for k, rows in preds.items():
+        pd.DataFrame(rows).to_csv(f"data/predictions/ridgecrest_{k}.csv", index=False)
+    print("saved predictions and block features")
