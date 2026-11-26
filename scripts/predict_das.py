@@ -17,13 +17,16 @@ from src.stacking import substack
 from src.preprocess import preprocess_trace
 from src.features import extract_features
 from src.compare import FEATURES_11
+sys.path.insert(0, "scripts")
+from stack_checks import after_before, fake_splits_before
+from src.preprocess import bandpass, preprocess_trace 
 
 DATA_DIR = "data/ridgecrest_north/data"
 CHECKS = "data/stack_checks_ridgecrest.csv"
 MODELS = {"all": "data/models/rf_all.joblib", "lt5": "data/models/rf_lt5.joblib"}
 
-RATIO_FACTOR = 1.2 # ratio at P must be >= 1.2 x the best fake window
-MAX_ONSET_OFFSET_S = 2.0 # observed onset within 2 s of predicted P
+RATIO_FACTOR = 1.2 # ratio at P must be >= 1.2x the best fake window
+MAX_ONSET_OFFSET_S = 2.0 # observed onset within 2s of predicted P
 
 def test_events():
     c = pd.read_csv(CHECKS)
@@ -38,15 +41,26 @@ def block_features(path, p_s):
     data, meta = load_das_event(path)
     fs = meta["fs"]
     blocks, counts = substack(data, fs, group=50, filtered=False)  # filtered once, below
+
+    # detection test on a 0.5-10 Hz copy
+    filt = np.array([bandpass(b, fs) for b in blocks])
+    splits = fake_splits_before(p_s)
+    if not splits:
+        return pd.DataFrame()
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = after_before(filt, fs, p_s)
+        fakes = np.array([after_before(filt, fs, s) for s in splits])
+    detected = ratio >= RATIO_FACTOR * fakes.max(axis=0)
+
     rows = []
     for b, (x, n) in enumerate(zip(blocks, counts)):
-        if n == 0:
-            continue   # block with no live channels
+        if n == 0 or not detected[b]:
+            continue   # dead block, or no arrival visible in it
         try:
             win, _ = preprocess_trace(x, fs, p_index=round(p_s * fs))
         except ValueError:
             continue
-        rows.append({"block": b, **extract_features(win)})
+        rows.append({"block": b, "ratio": float(ratio[b]), **extract_features(win)})
     return pd.DataFrame(rows)
 
 if __name__ == "__main__":
@@ -57,7 +71,7 @@ if __name__ == "__main__":
     for _, r in test_events().iterrows():
         f = block_features(os.path.join(DATA_DIR, r["file"]), r["p_s"])
         if f.empty:
-            print(r["file"], "-> no usable blocks")
+            print(r["file"], "skipped, no block with a detected arrival")
             continue
         eid = r["file"].replace(".h5", "")
         f = f.assign(event_id=eid, label="EQ", dist_deg=r["dist_km"] / 111.19)
