@@ -1,15 +1,5 @@
-"""Build the seismograph feature tables for train_rf.py.
-
-  data/features/gtune_une.csv : GTUNE explosions (load_gtune), label UNE
-  data/features/eq.csv        : EarthScope earthquakes from download_eqs.py and
-                                download_eqs_near.py, label EQ
-
-The earthquake records get the same quality filters as load_gtune (<= 20 deg,
->= 20 Hz, full 60 s, no duplicates), so both classes pass the same checks.
-
-Usage, from the top of the repo:
-    python scripts/build_features.py            # both tables
-    python scripts/build_features.py --eq-only  # keep gtune_une.csv as it is
+"""Build data/features/gtune_une.csv and eq.csv for train_rf.py.
+Usage: python scripts/build_features.py [--eq-only]
 """
 import argparse
 import os

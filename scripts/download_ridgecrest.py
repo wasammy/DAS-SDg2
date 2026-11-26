@@ -1,20 +1,5 @@
-"""
-Pick and download Ridgecrest DAS event files (AI4EPS/quakeflow_das, ridgecrest_north).
-
-Events are chosen from the catalog by fixed rules, not by looking at the data,
-so the DAS test set is not hand-picked:
-  A: every M>=3.0 event within 100 km of the cable (detection threshold is ~M3 at 93 km)
-  B: every M>=2.0 event within 30 km
-  C: the next-largest events within 30 km, until --total new files are chosen
-Whether each event is actually detected is decided later by stack_checks.py.
-
-Needs data/ridgecrest_catalog.csv (ComCat lookup of the 751 event IDs, with
-distance to the cable). Files already in data/ridgecrest_north/data are skipped.
-Stops if free disk space drops below 2 GB. Each file is ~110 MB.
-
-Usage, from the top of the repo:
-    python scripts/download_ridgecrest.py --total 60
-Writes data/ridgecrest_selection.csv and data/ridgecrest_north/data/<id>.h5
+"""Pick Ridgecrest DAS events from data/ridgecrest_catalog.csv by fixed rules and download them.
+Usage: python scripts/download_ridgecrest.py --total 60
 """
 import argparse
 import shutil
@@ -45,7 +30,7 @@ def select(cat, have, total):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--total", type=int, default=60, help="new files to download")
+    ap.add_argument("--total", type=int, default=60)
     args = ap.parse_args()
 
     cat = pd.read_csv(CATALOG)
