@@ -6,13 +6,14 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import GroupKFold, GroupShuffleSplit
 
 sys.path.insert(0, ".")
 from src.compare import FEATURES_11   #13-peak and crest_factor
 
 BINS = [("<5", 0, 5), ("5-10", 5, 10), ("10-20", 10, 20.01)]
-OUT_DIR = "data/models" 
+OUT_DIR = "data/models"
+N_FOLDS = 5
 
 def load_table(une_csv="data/features/gtune_une.csv", eq_csv="data/features/eq.csv"):
     df = pd.concat([pd.read_csv(une_csv), pd.read_csv(eq_csv)], ignore_index=True)
@@ -44,6 +45,33 @@ def class_rates(rf, df):
 def in_bin(df, lo, hi):
     return df[(df["dist_deg"] >= lo) & (df["dist_deg"] < hi)]
 
+
+def cross_distance_cv(df, n_folds=N_FOLDS, seed=0):
+    """Cross-distance accuracy over n_folds GroupKFold folds (grouped by event,
+    so no event is in both train and test). Returns (mean, std, n) tables:
+    rows = trained on, columns = tested on, n = folds that had test data."""
+    names = [b[0] for b in BINS]
+    scores = {(r, c): [] for r in names for c in names}
+    gkf = GroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    for tr, te in gkf.split(df, df["y"], groups=df["event_id"]):
+        tr_df, te_df = df.iloc[tr], df.iloc[te]
+        for tr_name, lo, hi in BINS:
+            sub = in_bin(tr_df, lo, hi)
+            if sub["y"].nunique() < 2:
+                continue   # only one class in this training bin
+            m = train(sub)
+            for te_name, lo2, hi2 in BINS:
+                acc = accuracy(m, in_bin(te_df, lo2, hi2))
+                if not np.isnan(acc):
+                    scores[(tr_name, te_name)].append(acc)
+    mean = pd.DataFrame(index=names, columns=names, dtype=float)
+    std, n = mean.copy(), mean.copy()
+    for (r, c), v in scores.items():
+        mean.loc[r, c] = np.mean(v) if v else np.nan
+        std.loc[r, c] = np.std(v) if v else np.nan
+        n.loc[r, c] = len(v)
+    return mean, std, n
+
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     df = load_table()
@@ -68,17 +96,30 @@ if __name__ == "__main__":
 
     
 
-    #cross-distance table (rows = trained on, columns = tested on)
-    names = [b[0] for b in BINS]
-    table = pd.DataFrame(index=names, columns=names, dtype=float)
+    # per-bin models from the fixed split, saved for predict_das.py
     for tr_name, lo, hi in BINS:
         sub = in_bin(train_df, lo, hi)
         if sub["y"].nunique() < 2:
-            print(f"bin {tr_name}: only one class in training, skipped")
+            print(f"bin {tr_name}: only one class in training, no model saved")
             continue
-        m = train(sub)
-        joblib.dump(m, f"{OUT_DIR}/rf_{tr_name.replace('<', 'lt')}.joblib")
-        for te_name, lo2, hi2 in BINS:
-            table.loc[tr_name, te_name] = accuracy(m, in_bin(test_df, lo2, hi2))
-    print("\nCross-distance accuracy (%), rows = trained on, columns = tested on")
-    print((table * 100).round(1).to_string())
+        joblib.dump(train(sub), f"{OUT_DIR}/rf_{tr_name.replace('<', 'lt')}.joblib")
+
+    # traces and events per bin and class, so thin cells are visible
+    print("\nTraces (events) per distance bin")
+    for name, lo, hi in BINS:
+        b = in_bin(df, lo, hi)
+        eq, une = b[b["y"] == 0], b[b["y"] == 1]
+        print(f"  {name:>5}: EQ {len(eq)} ({eq['event_id'].nunique()})   "
+              f"UNE {len(une)} ({une['event_id'].nunique()})")
+
+    # cross-distance table, 5-fold GroupKFold by event (rows = trained on, columns = tested on)
+    mean, std, n = cross_distance_cv(df)
+    # "+/-" rather than the plus-minus sign: the Windows console can't print it
+    cell = (mean * 100).round(1).astype(str) + " +/- " + (std * 100).round(1).astype(str)
+    cell = cell.where(n > 0, "n/a")
+    print(f"\nCross-distance accuracy (%), mean +/- std over {N_FOLDS} GroupKFold folds")
+    print("rows = trained on, columns = tested on")
+    print(cell.to_string())
+    if (n < N_FOLDS).to_numpy().any():
+        print("folds with test data per cell (fewer than 5 = a bin was empty in some folds):")
+        print(n.astype(int).to_string())
