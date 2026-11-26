@@ -22,10 +22,16 @@ DATA_DIR = "data/ridgecrest_north/data"
 CHECKS = "data/stack_checks_ridgecrest.csv"
 MODELS = {"all": "data/models/rf_all.joblib", "lt5": "data/models/rf_lt5.joblib"}
 
+RATIO_FACTOR = 1.2 # ratio at P must be >= 1.2 x the best fake window
+MAX_ONSET_OFFSET_S = 2.0 # observed onset within 2 s of predicted P
+
 def test_events():
     c = pd.read_csv(CHECKS)
-    keep = c[(c["fits_window"] == True) & (c["above_all_fakes"] == True)]
-    print(f"{len(keep)} of {len(c)} Ridgecrest files are detectable and fit the window")
+    keep = c[(c["fits_window"] == True)
+             & (c["ratio_at_P"] >= RATIO_FACTOR * c["fake_same_file_max"])
+             & (c["onset_minus_P_s"].abs() <= MAX_ONSET_OFFSET_S)]
+    print(f"{len(keep)} of {len(c)} Ridgecrest files pass the strict rule "
+          f"(ratio >= {RATIO_FACTOR}x best fake, onset within {MAX_ONSET_OFFSET_S:.0f} s)")
     return keep
 
 def block_features(path, p_s):
