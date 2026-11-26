@@ -1,7 +1,9 @@
 """Classify Ridgecrest DAS events with the seismograph-trained RF.
 
-One prediction per event: substack 50 channels, preprocess each block like the
-seismograph data, predict each block, event probability==median over blocks.
+One prediction per event: substack 50 channels, keep only blocks where the
+arrival is detected (after/before ratio >= 1.2x the best fake window), preprocess
+each kept block like the seismograph data, predict it, and take the median
+probability over kept blocks as the event probability.
 Writes predictions in evaluate.py's format, plus block features for Test 6.
 """
 import os
@@ -14,12 +16,11 @@ import pandas as pd
 sys.path.insert(0, ".")
 from src.das_io import load_das_event
 from src.stacking import substack
-from src.preprocess import preprocess_trace
+from src.preprocess import bandpass, preprocess_trace
 from src.features import extract_features
 from src.compare import FEATURES_11
 sys.path.insert(0, "scripts")
 from stack_checks import after_before, fake_splits_before
-from src.preprocess import bandpass, preprocess_trace 
 
 DATA_DIR = "data/ridgecrest_north/data"
 CHECKS = "data/stack_checks_ridgecrest.csv"
