@@ -1,4 +1,5 @@
-"""Train RF-v2 (11 features) on seismograph traces that pass the SNR rule: all distances and per distance bin."""
+"""Train RF-v2 (11 features) on seismograph traces that pass the SNR rule, all distances and per bin.
+Final models leave out the held-out explosion events; the cross-distance table is GroupKFold on everything."""
 import os
 import sys
 
@@ -9,7 +10,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GroupKFold
 
 sys.path.insert(0, ".")
-from src.compare import FEATURES_11   #13-peak and crest_factor
+from src.compare import FEATURES_11  # 13 minus peak and crest_factor
 
 BINS = [("<5", 0, 5), ("5-10", 5, 10), ("10-20", 10, 20.01)]
 OUT_DIR = "data/models"
@@ -33,20 +34,12 @@ def accuracy(rf, df):
     return np.nan if len(df) == 0 else float((rf.predict(df[FEATURES_11]) == df["y"]).mean())
 
 
-def class_rates(rf, df):
-    pred = rf.predict(df[FEATURES_11])
-    eq, une = df["y"] == 0, df["y"] == 1
-    return float((pred[eq] == 0).mean()), float((pred[une] == 1).mean())
-
-
 def in_bin(df, lo, hi):
     return df[(df["dist_deg"] >= lo) & (df["dist_deg"] < hi)]
 
 
 def cross_distance_cv(df, n_folds=N_FOLDS, seed=0):
-    """Cross-distance accuracy over n_folds GroupKFold folds (grouped by event,
-    so no event is in both train and test). Returns (mean, std, n) tables:
-    rows = trained on, columns = tested on, n = folds that had test data."""
+    # grouped by event; returns (mean, std, n folds with test data), rows = trained on
     names = [b[0] for b in BINS]
     scores = {(r, c): [] for r in names for c in names}
     gkf = GroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
@@ -55,7 +48,7 @@ def cross_distance_cv(df, n_folds=N_FOLDS, seed=0):
         for tr_name, lo, hi in BINS:
             sub = in_bin(tr_df, lo, hi)
             if sub["y"].nunique() < 2:
-                continue   # only one class in this training bin
+                continue  # only one class in this bin
             m = train(sub)
             for te_name, lo2, hi2 in BINS:
                 acc = accuracy(m, in_bin(te_df, lo2, hi2))
@@ -95,7 +88,6 @@ if __name__ == "__main__":
         print(f"bin {tr_name} model ({len(sub)} traces), held-out explosions called UNE: "
               + (f"{accuracy(m, te):.1%} of {len(te)}" if len(te) else "none in bin"))
 
-    # traces and events per bin and class, so thin cells are visible
     print("\nTraces (events) per distance bin")
     for name, lo, hi in BINS:
         b = in_bin(df, lo, hi)
@@ -103,9 +95,8 @@ if __name__ == "__main__":
         print(f"  {name:>5}: EQ {len(eq)} ({eq['event_id'].nunique()})   "
               f"UNE {len(une)} ({une['event_id'].nunique()})")
 
-    # cross-distance table, 5-fold GroupKFold by event (rows = trained on, columns = tested on)
     mean, std, n = cross_distance_cv(df)
-    # "+/-" rather than the plus-minus sign: the Windows console can't print it
+    # plain +/-, the Windows console chokes on the real sign
     cell = (mean * 100).round(1).astype(str) + " +/- " + (std * 100).round(1).astype(str)
     cell = cell.where(n > 0, "n/a")
     print(f"\nCross-distance accuracy (%), mean +/- std over {N_FOLDS} GroupKFold folds")

@@ -1,4 +1,4 @@
-"""Earthquakes matched to the under-5 deg GTUNE explosions: same station, same year, same count (1.5-5 deg, M>=4, M3-4 to fill).
+"""Earthquakes matched to the under-5 deg explosions: same station, same year, same count.
 Usage: python scripts/download_eqs_matched.py [start_target]   -> data/gtune/eqs_matched.h5
 """
 import os
@@ -65,7 +65,7 @@ if __name__ == "__main__":
                 evs = events(r.stla, r.stlo, r.year, lo, hi)
             except Exception:
                 continue
-            for ev in evs[:max(30, 6 * r.need)]:
+            for ev in evs[:max(30, 6 * r.need)]:  # cap the tries per station-year
                 if kept >= r.need:
                     break
                 tried += 1

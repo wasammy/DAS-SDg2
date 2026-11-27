@@ -17,6 +17,7 @@ MIN_FREE_GB = 2.0
 
 
 def select(cat, have, total):
+    # A: M>=3 within 100 km, B: M>=2 within 30 km, C: biggest of the rest within 30 km
     new = cat[~cat["id"].isin(have)]
     a = new[(new["mag"] >= 3.0) & (new["dist_km"] <= 100)].assign(rule="A")
     rest = new[~new["id"].isin(a["id"])]

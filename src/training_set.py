@@ -1,10 +1,10 @@
-"""seismograph training set: GTUNE explosions+IRIS earthquakes."""
+"""Seismograph training set: GTUNE explosions and EarthScope/NCEDC earthquakes, one feature row per trace."""
 import numpy as np
 import pandas as pd
 from src.preprocess import preprocess_trace
 from src.features import extract_features
 
-P_OFFSET_S = 10.0  # GTUNE traces are cut with P at 10s (README+handout)
+P_OFFSET_S = 10.0  # GTUNE traces are cut with P at 10 s (README, handout)
 
 MAX_DIST_DEG = 20.0
 MIN_FS = 20.0
@@ -29,7 +29,7 @@ def feature_rows(df, label):
         try:
             win, _ = preprocess_trace(r["waveform"], fs, p_index=round(P_OFFSET_S * fs))
         except ValueError:
-            continue  # too short after resampling, or flat
+            continue  # too short or flat
         rows.append({"event_id": str(r["evid"]), "net": r["net"],
                      "station": r["station"], "dist_deg": r["station_dist"],
                      "label": label, **extract_features(win)})

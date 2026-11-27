@@ -1,6 +1,4 @@
-"""Build data/features/gtune_une.csv and eq.csv for train_rf.py, with an snr_pass column
-(after/before ratio at P >= 1.2x the best fake window, the same rule as the DAS test set).
-Earthquake records whose USGS catalog type is not "earthquake" are dropped.
+"""Feature tables for train_rf.py (gtune_une.csv, eq.csv), with the same SNR rule as the DAS side.
 Usage: python scripts/build_features.py [--eq-only]
 """
 import argparse
@@ -25,6 +23,7 @@ USGS = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 
 
 def catalog_type(t):
+    # nearest USGS event within 2 s, so mislabeled blasts and nuclear tests get caught
     r = requests.get(USGS, timeout=60, params=dict(
         format="geojson", minmagnitude=2.5,
         starttime=pd.Timestamp(t - 2, unit="s").isoformat(),

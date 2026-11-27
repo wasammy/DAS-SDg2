@@ -41,8 +41,8 @@ if __name__ == "__main__":
     if start > 1 and os.path.exists(OUT):
         rows = pd.read_hdf(OUT, "df").to_dict("records")
         print("resuming with", len(rows), "saved records")
-    
-    done = set()
+
+    done = set()  # skip records already in eqs_iris.h5
     if os.path.exists(base.OUT):
         old = pd.read_hdf(base.OUT, "df")
         done = set(zip(old["evid"], old["net"], old["station"]))

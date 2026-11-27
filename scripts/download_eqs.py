@@ -1,7 +1,5 @@
-"""earthquake records from EarthScope, in the same layout as GTUNE.
-
-Same stations as the GTUNE explosions, BHZ, raw counts, 60 s with P at 10 s.
-Usage: python scripts/download_eqs.py [start_station]
+"""Earthquakes at the GTUNE stations (BHZ, 60 s, P at 10 s), in the GTUNE layout.
+Usage: python scripts/download_eqs.py [start_station]   -> data/gtune/eqs_iris.h5
 """
 import os
 import random
@@ -17,13 +15,13 @@ from obspy.taup import TauPyModel
 sys.path.insert(0, ".")
 from src.training_set import load_gtune
 
-PER_STATION = 5  #earthquakes kept per station
+PER_STATION = 5
 MIN_MAG, MAX_DEPTH_KM = 4.0, 50
 MIN_DIST, MAX_DIST = 1.5, 20.0
 OUT = "data/gtune/eqs_iris.h5"
 
-events_client = Client("USGS", timeout=60)    #earthquake catalog
-wave_client = Client("EARTHSCOPE", timeout=60)    # waveforms (formerly IRIS)
+events_client = Client("USGS", timeout=60)
+wave_client = Client("EARTHSCOPE", timeout=60)  # formerly IRIS
 model = TauPyModel("iasp91")
 random.seed(0)
 
@@ -51,12 +49,12 @@ def fetch_record(net, sta, lat, lon, ev):
     if not arr:
         return None
     p = o.time + arr[0].time
-    time.sleep(0.5) 
+    time.sleep(0.5)  # go easy on the server
     st = wave_client.get_waveforms(net, sta, "*", "BHZ", p - 10, p + 50)
     if len(st) == 0:
         return None
     tr = st[0]
-    if abs(tr.stats.starttime - (p - 10)) > 0.5: 
+    if abs(tr.stats.starttime - (p - 10)) > 0.5:  # gap at the start, P wouldn't be at 10 s
         return None
     return dict(origin_time=o.time.timestamp, trace_start_time=tr.stats.starttime.timestamp,
                 p_arrival=arr[0].time, sampling_rate=tr.stats.sampling_rate,
@@ -92,7 +90,7 @@ if __name__ == "__main__":
                 rows.append(rec)
                 kept += 1
         print(f"[{i}/{len(stations)}] {s.net}.{s.station}: {kept} records", flush=True)
-        if i % 20 == 0: 
+        if i % 20 == 0:
             pd.DataFrame(rows).to_hdf(OUT, key="df", mode="w")
     pd.DataFrame(rows).to_hdf(OUT, key="df", mode="w")
     print("saved", len(rows), "earthquake records")

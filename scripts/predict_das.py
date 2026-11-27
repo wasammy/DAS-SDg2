@@ -1,10 +1,5 @@
-"""Classify Ridgecrest DAS events with the seismograph-trained RF.
-
-One prediction per event: substack 50 channels, keep only blocks where the
-arrival is detected (after/before ratio >= 1.2x the best fake window), preprocess
-each kept block like the seismograph data, predict it, and take the median
-probability over kept blocks as the event probability.
-Writes predictions in evaluate.py's format, plus block features for Test 6.
+"""Classify Ridgecrest DAS events: 50-channel blocks with a detected arrival, median P(UNE) per event.
+Saved models (all, <5) plus a 50-model <5 ensemble; outputs in evaluate.py's format.
 """
 import os
 import sys
@@ -27,11 +22,11 @@ DATA_DIR = "data/ridgecrest_north/data"
 CHECKS = "data/stack_checks_ridgecrest.csv"
 MODELS = {"all": "data/models/rf_all.joblib", "lt5": "data/models/rf_lt5.joblib"}
 
-RATIO_FACTOR = 1.2 # ratio at P must be >= 1.2x the best fake window
-MAX_ONSET_OFFSET_S = 2.0 # observed onset within 2s of predicted P
-N_SEEDS = 50    # under-5 deg models in the ensemble
-FRAC = 0.8      # share of training events each model sees
-FAR_KM = 90     # far vs close Ridgecrest events
+RATIO_FACTOR = 1.2  # ratio at P must be >= 1.2x the best fake window
+MAX_ONSET_OFFSET_S = 2.0  # observed onset within 2 s of predicted P
+N_SEEDS = 50
+FRAC = 0.8  # share of training events each ensemble model sees
+FAR_KM = 90
 
 def test_events():
     c = pd.read_csv(CHECKS)
@@ -45,10 +40,9 @@ def test_events():
 def block_features(path, p_s):
     data, meta = load_das_event(path)
     fs = meta["fs"]
-    blocks, counts = substack(data, fs, group=50, filtered=False)  # filtered once, below
+    blocks, counts = substack(data, fs, group=50, filtered=False)  # preprocess_trace filters it once
 
-    # detection test on a 0.5-10 Hz copy
-    filt = np.array([bandpass(b, fs) for b in blocks])
+    filt = np.array([bandpass(b, fs) for b in blocks])  # filtered copy only for detection
     splits = fake_splits_before(p_s)
     if not splits:
         return pd.DataFrame()
