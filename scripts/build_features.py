@@ -15,7 +15,7 @@ sys.path.insert(0, ".")
 from src.preprocess import bandpass
 from src.training_set import load_gtune, feature_rows, MAX_DIST_DEG, MIN_FS, P_OFFSET_S
 
-EQ_FILES = ["data/gtune/eqs_iris.h5", "data/gtune/eqs_near.h5"]
+EQ_FILES = ["data/gtune/eqs_iris.h5", "data/gtune/eqs_near.h5", "data/gtune/eqs_matched.h5"]
 OUT_DIR = "data/features"
 RATIO_FACTOR = 1.2
 WIN_S, GAP_S = 3.0, 1.0

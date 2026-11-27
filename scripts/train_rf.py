@@ -14,6 +14,7 @@ from src.compare import FEATURES_11   #13-peak and crest_factor
 BINS = [("<5", 0, 5), ("5-10", 5, 10), ("10-20", 10, 20.01)]
 OUT_DIR = "data/models"
 N_FOLDS = 5
+HELDOUT = "data/features/heldout_une.csv"
 
 def load_table(une_csv="data/features/gtune_une.csv", eq_csv="data/features/eq.csv"):
     df = pd.concat([pd.read_csv(une_csv), pd.read_csv(eq_csv)], ignore_index=True)
@@ -22,10 +23,12 @@ def load_table(une_csv="data/features/gtune_une.csv", eq_csv="data/features/eq.c
     df = df[df["snr_pass"].astype(bool)].reset_index(drop=True)
     return df.dropna(subset=FEATURES_11)
 
-def split_by_event(df, test_frac=0.2, seed=0):
+def split_by_event(df, test_frac=0.2, seed=0, keep_out=()):
     gss = GroupShuffleSplit(n_splits=1, test_size=test_frac, random_state=seed)
     tr, te = next(gss.split(df, df["y"], groups=df["event_id"]))
-    return df.iloc[tr], df.iloc[te]
+    tr, te = df.iloc[tr], df.iloc[te]
+    move = tr["event_id"].isin(set(keep_out))
+    return tr[~move], pd.concat([te, tr[move]])
 
 def train(df):
     rf = RandomForestClassifier(n_estimators=500, class_weight="balanced",
@@ -76,7 +79,9 @@ def cross_distance_cv(df, n_folds=N_FOLDS, seed=0):
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     df = load_table()
-    train_df, test_df = split_by_event(df)
+    keep_out = pd.read_csv(HELDOUT)["event_id"].astype(str) if os.path.exists(HELDOUT) else []
+    train_df, test_df = split_by_event(df, keep_out=keep_out)
+    print(f"{len(set(keep_out))} previously held-out explosion events kept on the test side")
     for name, d in (("train", train_df), ("test", test_df)):
         print(f"{name}: {len(d)} traces, {d['event_id'].nunique()} events, "
               f"{int(d['y'].sum())} UNE / {int((d['y'] == 0).sum())} EQ")
@@ -92,7 +97,7 @@ if __name__ == "__main__":
 
     #for Himi's synthetic DAS test
     held = test_df[test_df["y"] == 1][["event_id", "net", "station", "dist_deg"]]
-    held.to_csv("data/features/heldout_une.csv", index=False)
+    held.to_csv(HELDOUT, index=False)
     print(f"\nSaved {len(held)} held-out explosion traces for the synthetic DAS test")
 
     
