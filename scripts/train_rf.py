@@ -6,7 +6,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import GroupKFold, GroupShuffleSplit
+from sklearn.model_selection import GroupKFold
 
 sys.path.insert(0, ".")
 from src.compare import FEATURES_11   #13-peak and crest_factor
@@ -23,16 +23,9 @@ def load_table(une_csv="data/features/gtune_une.csv", eq_csv="data/features/eq.c
     df = df[df["snr_pass"].astype(bool)].reset_index(drop=True)
     return df.dropna(subset=FEATURES_11)
 
-def split_by_event(df, test_frac=0.2, seed=0, keep_out=()):
-    gss = GroupShuffleSplit(n_splits=1, test_size=test_frac, random_state=seed)
-    tr, te = next(gss.split(df, df["y"], groups=df["event_id"]))
-    tr, te = df.iloc[tr], df.iloc[te]
-    move = tr["event_id"].isin(set(keep_out))
-    return tr[~move], pd.concat([te, tr[move]])
-
-def train(df):
+def train(df, seed=0):
     rf = RandomForestClassifier(n_estimators=500, class_weight="balanced",
-                                random_state=0, n_jobs=-1)
+                                random_state=seed, n_jobs=-1)
     return rf.fit(df[FEATURES_11], df["y"])
 
 
@@ -79,30 +72,18 @@ def cross_distance_cv(df, n_folds=N_FOLDS, seed=0):
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     df = load_table()
-    keep_out = pd.read_csv(HELDOUT)["event_id"].astype(str) if os.path.exists(HELDOUT) else []
-    train_df, test_df = split_by_event(df, keep_out=keep_out)
-    print(f"{len(set(keep_out))} previously held-out explosion events kept on the test side")
-    for name, d in (("train", train_df), ("test", test_df)):
-        print(f"{name}: {len(d)} traces, {d['event_id'].nunique()} events, "
-              f"{int(d['y'].sum())} UNE / {int((d['y'] == 0).sum())} EQ")
+    held = set(pd.read_csv(HELDOUT)["event_id"].astype(str))
+    train_df, test_df = df[~df["event_id"].isin(held)], df[df["event_id"].isin(held)]
+    print(f"{len(held)} held-out explosion events ({len(test_df)} traces) kept out of the final models")
+    print(f"train: {len(train_df)} traces, {train_df['event_id'].nunique()} events, "
+          f"{int(train_df['y'].sum())} UNE / {int((train_df['y'] == 0).sum())} EQ")
 
-    # all distances
     rf = train(train_df)
-    print(f"\nAll-distance model, held-out accuracy: {accuracy(rf, test_df):.1%}")
-    eq_ok, une_ok = class_rates(rf, test_df)
-    print(f"  earthquakes correct: {eq_ok:.1%}   explosions correct: {une_ok:.1%}")
+    print(f"\nAll-distance model, held-out explosions called UNE: {accuracy(rf, test_df):.1%} of {len(test_df)}")
     joblib.dump(rf, f"{OUT_DIR}/rf_all.joblib")
     imp = pd.Series(rf.feature_importances_, index=FEATURES_11).sort_values(ascending=False)
     print("Top features:\n", imp.head(5).round(3).to_string())
 
-    #for Himi's synthetic DAS test
-    held = test_df[test_df["y"] == 1][["event_id", "net", "station", "dist_deg"]]
-    held.to_csv(HELDOUT, index=False)
-    print(f"\nSaved {len(held)} held-out explosion traces for the synthetic DAS test")
-
-    
-
-    # per-bin models from the fixed split, saved for predict_das.py
     for tr_name, lo, hi in BINS:
         sub = in_bin(train_df, lo, hi)
         if sub["y"].nunique() < 2:
@@ -111,9 +92,8 @@ if __name__ == "__main__":
         m = train(sub)
         joblib.dump(m, f"{OUT_DIR}/rf_{tr_name.replace('<', 'lt')}.joblib")
         te = in_bin(test_df, lo, hi)
-        eq_ok, une_ok = class_rates(m, te)
-        print(f"bin {tr_name} model, held-out {len(te)} traces: {accuracy(m, te):.1%} "
-              f"(EQ {eq_ok:.1%}, UNE {une_ok:.1%})")
+        print(f"bin {tr_name} model ({len(sub)} traces), held-out explosions called UNE: "
+              + (f"{accuracy(m, te):.1%} of {len(te)}" if len(te) else "none in bin"))
 
     # traces and events per bin and class, so thin cells are visible
     print("\nTraces (events) per distance bin")
