@@ -23,7 +23,7 @@ def events_near(lat, lon):
     cat = base.events_client.get_events(
         starttime=UTCDateTime(2000, 1, 1), endtime=UTCDateTime(2020, 1, 1),
         latitude=lat, longitude=lon, minradius=MIN_DIST, maxradius=MAX_DIST,
-        minmagnitude=MIN_MAG, maxdepth=MAX_DEPTH_KM, limit=200)
+        minmagnitude=MIN_MAG, maxdepth=MAX_DEPTH_KM, eventtype="earthquake", limit=200)
     events = list(cat)
     random.shuffle(events)
     return events

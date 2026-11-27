@@ -1,5 +1,6 @@
 """Build data/features/gtune_une.csv and eq.csv for train_rf.py, with an snr_pass column
 (after/before ratio at P >= 1.2x the best fake window, the same rule as the DAS test set).
+Earthquake records whose USGS catalog type is not "earthquake" are dropped.
 Usage: python scripts/build_features.py [--eq-only]
 """
 import argparse
@@ -8,6 +9,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+import requests
 
 sys.path.insert(0, ".")
 from src.preprocess import bandpass
@@ -18,6 +20,36 @@ OUT_DIR = "data/features"
 RATIO_FACTOR = 1.2
 WIN_S, GAP_S = 3.0, 1.0
 FAKE_SPLITS_S = (4.0, 5.0, 6.0)
+TYPES_CSV = "data/gtune/eq_catalog_types.csv"
+USGS = "https://earthquake.usgs.gov/fdsnws/event/1/query"
+
+
+def catalog_type(t):
+    r = requests.get(USGS, timeout=60, params=dict(
+        format="geojson", minmagnitude=2.5,
+        starttime=pd.Timestamp(t - 2, unit="s").isoformat(),
+        endtime=pd.Timestamp(t + 2, unit="s").isoformat()))
+    feats = r.json().get("features", [])
+    if not feats:
+        return "not found"
+    return min(feats, key=lambda f: abs(f["properties"]["time"] / 1000 - t))["properties"]["type"]
+
+
+def earthquakes_only(df):
+    known = {}
+    if os.path.exists(TYPES_CSV):
+        c = pd.read_csv(TYPES_CSV)
+        known = dict(zip(c["evid"].astype(str), c["type"]))
+    ev = df.drop_duplicates("evid")
+    for e, t in zip(ev["evid"].astype(str), ev["origin_time"]):
+        if e not in known:
+            known[e] = catalog_type(float(t))
+    pd.DataFrame({"evid": list(known), "type": list(known.values())}).to_csv(TYPES_CSV, index=False)
+    bad = {e: ty for e, ty in known.items() if ty not in ("earthquake", "not found")}
+    drop = df["evid"].astype(str).isin(bad)
+    for e in sorted(set(df.loc[drop, "evid"].astype(str))):
+        print(f"dropped {e}: catalog type {bad[e]}")
+    return df[~drop]
 
 
 def load_eqs():
@@ -35,6 +67,7 @@ def load_eqs():
     df = df[df["waveform"].apply(lambda w: w is not None and len(w) > 0)]
     df = df.drop_duplicates(subset=["evid", "net", "station", "chn"])
     df = df[df["waveform"].apply(len) >= 59.9 * df["sampling_rate"]]
+    df = earthquakes_only(df)
     return df.reset_index(drop=True)
 
 
