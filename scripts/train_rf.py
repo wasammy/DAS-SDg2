@@ -1,4 +1,4 @@
-"""Train RF-v2 (11 features) on seismograph data: all distances and per distance bin."""
+"""Train RF-v2 (11 features) on seismograph traces that pass the SNR rule: all distances and per distance bin."""
 import os
 import sys
 
@@ -19,6 +19,7 @@ def load_table(une_csv="data/features/gtune_une.csv", eq_csv="data/features/eq.c
     df = pd.concat([pd.read_csv(une_csv), pd.read_csv(eq_csv)], ignore_index=True)
     df["event_id"] = df["event_id"].astype(str)
     df["y"] = (df["label"] == "UNE").astype(int)   # 1 = explosion, 0 = earthquake
+    df = df[df["snr_pass"].astype(bool)].reset_index(drop=True)
     return df.dropna(subset=FEATURES_11)
 
 def split_by_event(df, test_frac=0.2, seed=0):
@@ -102,7 +103,12 @@ if __name__ == "__main__":
         if sub["y"].nunique() < 2:
             print(f"bin {tr_name}: only one class in training, no model saved")
             continue
-        joblib.dump(train(sub), f"{OUT_DIR}/rf_{tr_name.replace('<', 'lt')}.joblib")
+        m = train(sub)
+        joblib.dump(m, f"{OUT_DIR}/rf_{tr_name.replace('<', 'lt')}.joblib")
+        te = in_bin(test_df, lo, hi)
+        eq_ok, une_ok = class_rates(m, te)
+        print(f"bin {tr_name} model, held-out {len(te)} traces: {accuracy(m, te):.1%} "
+              f"(EQ {eq_ok:.1%}, UNE {une_ok:.1%})")
 
     # traces and events per bin and class, so thin cells are visible
     print("\nTraces (events) per distance bin")
