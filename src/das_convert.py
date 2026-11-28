@@ -10,6 +10,8 @@ Notes (from review):
   change classifier inputs. It only matters for the amplitude check.
 """
 import numpy as np
+from scipy.integrate import cumulative_trapezoid
+from scipy.signal import detrend
 
 
 def velocity_to_strain_rate(v, fs, c=3000.0, to_microstrain=True):
@@ -30,3 +32,11 @@ def acceleration_to_strain_rate(a, c=3000.0, to_microstrain=True):
 def convert_over_speeds(v, fs, speeds=(2000, 3000, 4000, 6000, 8000)):
     """Same velocity trace at a range of assumed speeds (amplitude check only)."""
     return {c: velocity_to_strain_rate(v, fs, c) for c in speeds}
+
+
+def integrate_strain_rate(x, fs, axis=-1):
+    """Strain rate -> strain (velocity-like: -v/c for a plane wave), so DAS matches seismometer velocity.
+    Demean, trapezoid integration, linear detrend. Use at the raw rate, before preprocess_trace."""
+    x = np.asarray(x, dtype=float)
+    y = cumulative_trapezoid(x - x.mean(axis=axis, keepdims=True), dx=1.0 / fs, axis=axis, initial=0.0)
+    return detrend(y, axis=axis, type="linear")
