@@ -17,6 +17,25 @@ TARGET_FS = 20.0
 PRE_P_SAMPLES = 200 # 10 s at 20 Hz
 WINDOW_SAMPLES = 1200  # 60 s at 20 Hz
 
+def validate_waveform(x, fs):
+    """Validate waveform and sampling rate before processing."""
+
+    x = np.asarray(x, dtype=float)
+
+    if x.ndim != 1:
+        raise ValueError("Waveform must be one-dimensional")
+
+    if len(x) == 0:
+        raise ValueError("Waveform is empty")
+
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Waveform contains NaN or infinite values")
+
+    if not np.isfinite(fs) or fs <= 0:
+        raise ValueError("Invalid sampling rate")
+
+    return x
+
 
 def bandpass(x, fs, fmin=0.5, fmax=10.0, order=4):
     """
@@ -104,52 +123,97 @@ def cut_window(x, p_index, pre=PRE_P_SAMPLES, total=WINDOW_SAMPLES):
 
 
 def normalize(x):
-    """Scale so the largest absolute value is 1. Raises ValueError on a flat trace."""
+    """Peak-normalize waveform to [-1, 1]."""
+
     x = np.asarray(x, dtype=float)
-    peak = np.abs(x).max()
+
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Waveform contains NaN or infinite values")
+
+    if len(x) == 0:
+        raise ValueError("Cannot normalize an empty waveform")
+
+    peak = np.max(np.abs(x))
+
     if peak == 0:
-        raise ValueError("trace is all zeros")
+        raise ValueError("Trace is all zeros")
+
     return x / peak
 
 
 def preprocess_trace(x, fs, p_index=None, do_normalize=True):
     """
-    Full chain: bandpass -> resample -> pick P -> cut -> normalise.
+    Full preprocessing chain:
+    validate -> bandpass -> resample -> pick P -> cut -> normalize.
 
-    p_index : sample index of the P in the ORIGINAL trace if known;
-              None to find it with STA/LTA.
-
-    Returns (1200-sample window, info dict). Raises ValueError if the trace
-    cannot be processed.
+    Returns:
+        Processed 1200-sample waveform and information dictionary.
     """
-    x = np.asarray(x, dtype=float)
+
+    x = validate_waveform(x, fs)
+
     original_fs = float(fs)
-    info = {"original_fs": original_fs, "original_samples": len(x)}
 
-    if original_fs < TARGET_FS and not np.isclose(original_fs, TARGET_FS, atol=0.01):
-        raise ValueError(f"sampling rate {original_fs} Hz cannot support a 0.5-10 Hz band")
+    info = {
+        "original_fs": original_fs,
+        "original_samples": len(x),
+        "p_source": None,
+        "p_index": None,
+        "p_time_s": None,
+        "normalized": do_normalize
+    }
 
-    # filter first, then downsample: removing everything above 10 Hz means the
-    # downsample cannot alias, and the 10 Hz edge is unbuildable at 20 Hz
+    if original_fs < TARGET_FS and not np.isclose(
+        original_fs, TARGET_FS, atol=0.01
+    ):
+        raise ValueError(
+            f"Sampling rate {original_fs} Hz is below target {TARGET_FS} Hz"
+        )
+
+    # 1. Bandpass filter
     x = bandpass(x, original_fs)
+
+    # 2. Resample to 20 Hz
     x, fs = resample(x, original_fs)
+
     info["resampled_samples"] = len(x)
 
+    # 3. Find or use known P arrival
     if p_index is not None:
-        p_index = int(round(p_index * fs / original_fs)) # rescale
+
+        p_index = int(round(p_index * fs / original_fs))
         info["p_source"] = "metadata"
+
     else:
+
         p_index = pick_p(x, fs)
         info["p_source"] = "sta_lta"
+
         if p_index is None:
-            raise ValueError("STA/LTA found no arrival")
+            raise ValueError("STA/LTA found no P arrival")
 
     info["p_index"] = int(p_index)
     info["p_time_s"] = p_index / fs
 
+    # 4. Extract 60-second window
     x = cut_window(x, p_index)
+    info["window_p_index"] = PRE_P_SAMPLES
+
+    # 5. Peak normalization
     if do_normalize:
         x = normalize(x)
+
+    # 6. Validate final output
+    if len(x) != WINDOW_SAMPLES:
+        raise ValueError(
+            f"Expected {WINDOW_SAMPLES} samples, got {len(x)}"
+        )
+
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Processed waveform contains invalid values")
+
+    info["final_samples"] = len(x)
+    info["final_fs"] = fs
 
     return x, info
 
