@@ -33,7 +33,8 @@ def test_events():
     keep = c[(c["fits_window"] == True)
              & (c["ratio_at_P"] >= RATIO_FACTOR * c["fake_same_file_max"])
              & (c["onset_minus_P_s"].abs() <= MAX_ONSET_OFFSET_S)]
-    print(f"{len(keep)} of {len(c)} Ridgecrest files pass the strict rule "
+    name = os.path.basename(CHECKS).replace("stack_checks_", "").replace(".csv", "")
+    print(f"{len(keep)} of {len(c)} {name} files pass the strict rule "
           f"(ratio >= {RATIO_FACTOR}x best fake, onset within {MAX_ONSET_OFFSET_S:.0f} s)")
     return keep
 
