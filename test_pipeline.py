@@ -6,7 +6,7 @@ import tempfile, os
 from src.preprocess import bandpass, resample, pick_p, cut_window, normalize, preprocess_trace
 from src.features import extract_features, feature_table, RF_V2_FEATURES
 from src.das_io import load_das_event, select_channels, channel_snr
-from src.das_convert import velocity_to_strain_rate, acceleration_to_strain_rate
+from src.das_convert import velocity_to_strain_rate, acceleration_to_strain_rate, integrate_strain_rate
 
 rng = np.random.default_rng(0)
 ok = lambda name: print(f"  PASS  {name}")
@@ -160,6 +160,15 @@ a = 2*np.pi*np.cos(2*np.pi*t)
 sr_a = acceleration_to_strain_rate(a, c=3000, to_microstrain=False)
 assert np.allclose(sr_a, expected, rtol=0, atol=1e-12)
 ok("acceleration input: strain rate = -a/c")
+print("\n[10] integrate_strain_rate")
+from scipy.signal import detrend
+y = integrate_strain_rate(sr, fs)
+expected = detrend(-v / 3000, type="linear")  # the function detrends too
+assert np.allclose(y[5:-5], expected[5:-5], rtol=0, atol=0.01 * np.abs(expected).max())
+ok("strain rate of a sine integrates back to -v/c")
+Y = integrate_strain_rate(np.vstack([sr, 2 * sr]), fs)
+assert np.allclose(Y[1], 2 * Y[0]) and np.allclose(Y[0], y)
+ok("works per row on a (channels, time) array")
 print("\nAll checks passed.\n")
 
 
